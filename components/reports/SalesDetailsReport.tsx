@@ -1,0 +1,597 @@
+"use client";
+import GroupPagination from "./GroupPagination";
+
+// ============================================================
+// LOCATION: components/reports/SalesDetailsReport.tsx
+// ALUTH FILE — mekamama create karanna
+//
+// Sales Details report (presentational — data page eken enawa):
+//   per-date card (gradient date bar + bill count + footer strip)
+//     └ per-bill block: BillNo + meta chips row
+//         └ items table (Menu Item | Qty | Sales Price | Tot Item Price)
+//         └ totals box (Gross → Net Total, POS PDF box eka wage)
+// Exports:
+//   filterSalesDetails(report, query) — bill/item search filter
+//   SalesDetailsData / DetBill / DetItem types
+// ============================================================
+import type { CSSProperties } from "react";
+import { IconCalendar, IconInbox, IconPin } from "./ReportIcons";
+
+export interface DetItem {
+  name: string;
+  qty: number;
+  salesPrice: number;
+  totItemPrice: number;
+}
+
+export interface DetTotals {
+  gross: number;
+  discount: number;
+  discountPre: number;
+  grossAfterDis: number;
+  serviceCharge: number;
+  otherServiceCharge: number;
+  vat: number;
+  otherVat: number;
+  tdl: number;
+  packingCharge: number;
+  deliveryCharge: number;
+  netTotal: number;
+}
+
+export interface DetBill {
+  billNo: string;
+  billType: string;
+  userName: string;
+  steward: string;
+  noPax: string;
+  tableNo: string;
+  orderMode: string;
+  items: DetItem[];
+  totals: DetTotals;
+}
+
+export interface DetDateGroup {
+  date: string;
+  bills: DetBill[];
+  dayNetTotal: number;
+}
+
+export interface DetLocationGroup {
+  locCode: string;
+  locName: string;
+  locNetTotal: number;
+  dateGroups: DetDateGroup[];
+}
+
+export interface SalesDetailsData {
+  locationGroups: DetLocationGroup[];
+  grandNetTotal: number;
+}
+
+const fmtAmt = (n: number) =>
+  n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+const fmtQty = (n: number) =>
+  n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Search filter — bill fields + item names scan; matching bills full display */
+export function filterSalesDetails(
+  report: SalesDetailsData,
+  query: string
+): SalesDetailsData {
+  const q = query.trim().toLowerCase();
+  if (!q) return report;
+  const locationGroups = (report.locationGroups ?? [])
+    .map((loc) => {
+      const dateGroups = (loc.dateGroups ?? [])
+        .map((g) => {
+          const bills = (g.bills ?? []).filter((b) => {
+            const itemHay = (b.items ?? []).map((i) => i.name).join(" ");
+            const hay = `${b.billNo} ${b.billType} ${b.userName} ${b.steward} ${b.tableNo} ${b.orderMode} ${b.noPax} ${itemHay} ${b.totals?.netTotal ?? 0}`;
+            return hay.toLowerCase().includes(q);
+          });
+          return {
+            ...g,
+            bills,
+            dayNetTotal: bills.reduce((s, b) => s + (b.totals?.netTotal ?? 0), 0),
+          };
+        })
+        .filter((g) => g.bills.length > 0);
+      return {
+        ...loc,
+        dateGroups,
+        locNetTotal: dateGroups.reduce((s, g) => s + g.dayNetTotal, 0),
+      };
+    })
+    .filter((loc) => loc.dateGroups.length > 0);
+  return {
+    locationGroups,
+    grandNetTotal: locationGroups.reduce((s, l) => s + l.locNetTotal, 0),
+  };
+}
+
+const grad = "linear-gradient(135deg,#45301D 0%,#684830 100%)";
+
+// ✅ Light-blue header (POS report eke wage) — dark gradient eka ain karala
+const th: CSSProperties = {
+  background: "#E4D6BF",
+  color: "#684830",
+  padding: "9px 12px",
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: 0.6,
+  textTransform: "uppercase",
+  borderRight: "1px solid #C8B8A8",
+  whiteSpace: "nowrap",
+  textAlign: "left",
+};
+
+const td: CSSProperties = {
+  padding: "7px 12px",
+  fontSize: 12,
+  color: "#45301D",
+  borderBottom: "1px solid #FCF7F3",
+  fontVariantNumeric: "tabular-nums",
+  whiteSpace: "nowrap",
+};
+
+export default function SalesDetailsReport({
+  report,
+}: {
+  report: SalesDetailsData;
+}) {
+  const billCount = report.locationGroups.reduce(
+    (s, l) => s + l.dateGroups.reduce((n, g) => n + g.bills.length, 0),
+    0
+  );
+
+  // ── Empty state (same family as other reports) ──
+  if (report.locationGroups.length === 0) {
+    return (
+      <div style={{ padding: "22px 24px 28px", fontFamily: "Inter, sans-serif" }}>
+        <div
+          style={{
+            border: "1px solid #E4D6BF",
+            borderRadius: 14,
+            background: "#ffffff",
+            boxShadow:
+              "0 1px 2px rgba(114,86,60,0.04), 0 8px 24px rgba(114,86,60,0.06)",
+            padding: "46px 20px",
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              marginBottom: 10,
+              color: "#C8B8A8",
+            }}
+          >
+            <IconInbox size={30} strokeWidth={1.6} />
+          </div>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 13.5,
+              fontWeight: 600,
+              color: "#684830",
+            }}
+          >
+            No bill details found for the selected date range.
+          </p>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#907860" }}>
+            Try changing the date range or clearing the search.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const metaChip = (label: string, value: string) =>
+    value ? (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          background: "#FCF7F3",
+          border: "1px solid #E4D6BF",
+          borderRadius: 999,
+          padding: "3px 10px",
+          fontSize: 10.5,
+          fontWeight: 600,
+          color: "#6B543E",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ color: "#907860", fontWeight: 700 }}>{label}</span>
+        {value}
+      </span>
+    ) : null;
+
+  return (
+    <div style={{ padding: "22px 24px 28px", fontFamily: "Inter, sans-serif" }}>
+      {report.locationGroups.map((loc) => (
+        <div
+          key={loc.locCode}
+          style={{
+            marginTop: 18,
+            border: "1px solid #E4D6BF",
+            borderRadius: 14,
+            overflow: "hidden",
+            background: "#ffffff",
+            boxShadow:
+              "0 1px 2px rgba(114,86,60,0.04), 0 8px 24px rgba(114,86,60,0.06)",
+          }}
+        >
+          {/* location bar — orange accent */}
+          <div
+            style={{
+              padding: "11px 16px",
+              fontSize: 13,
+              fontWeight: 700,
+              color: "#45301D",
+              background: "#F0E8D8",
+              borderBottom: "1px solid #E4D6BF",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <IconPin size={13} strokeWidth={2.2} />
+              {loc.locName}
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span
+                style={{
+                  background: "rgba(104,72,48,0.10)",
+                  borderRadius: 999,
+                  padding: "3px 10px",
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  letterSpacing: 0.3,
+                }}
+              >
+                {loc.dateGroups.reduce((s, g) => s + g.bills.length, 0)}{" "}
+                bill{loc.dateGroups.reduce((s, g) => s + g.bills.length, 0) === 1 ? "" : "s"}
+              </span>
+              <span
+                style={{
+                  background: "rgba(104,72,48,0.10)",
+                  borderRadius: 999,
+                  padding: "3px 10px",
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                Rs. {fmtAmt(loc.locNetTotal)}
+              </span>
+            </span>
+          </div>
+
+          {/* date sub-groups */}
+          <GroupPagination resetKey={JSON.stringify(loc.dateGroups)} unit="bills" groups={loc.dateGroups.map((g) => ({key:g.date,count:g.bills.length,content: (
+          <div key={g.date}>
+          {/* light date band */}
+          <div
+            style={{
+              padding: "8px 16px",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#684830",
+              background: "#FCF7F3",
+              borderBottom: "1px solid #E4D6BF",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <IconCalendar size={12} strokeWidth={2.2} />
+              {g.date}
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#45301D",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              Rs. {fmtAmt(g.dayNetTotal)}
+            </span>
+          </div>
+
+          {/* bills */}
+          {g.bills.map((b) => (
+            <div
+              key={b.billNo}
+              style={{
+                padding: "14px 16px 16px",
+                borderBottom: "1px solid #E4D6BF",
+              }}
+            >
+              {/* bill header — BillNo + meta chips */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  marginBottom: 10,
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    color: "#45301D",
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  {b.billNo}
+                </span>
+                <span
+                  style={{
+                    width: 1,
+                    height: 14,
+                    background: "#E4D6BF",
+                    display: "inline-block",
+                  }}
+                />
+                {metaChip("TYPE", b.billType)}
+                {metaChip("MODE", b.orderMode)}
+                {metaChip("CASHIER", b.userName)}
+                {metaChip("STEWARD", b.steward)}
+                {metaChip("PAX", b.noPax)}
+                {metaChip("TABLE", b.tableNo)}
+              </div>
+
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                {/* items table */}
+                <div
+                  style={{
+                    flex: "1 1 380px",
+                    minWidth: 340,
+                    overflowX: "auto",
+                    border: "1px solid #E4D6BF",
+                    borderRadius: 10,
+                  }}
+                >
+                  <table
+                    style={{
+                      width: "100%",
+                      borderCollapse: "collapse",
+                      fontSize: 12,
+                      minWidth: 340,
+                    }}
+                  >
+                    <thead>
+                      <tr>
+                        <th style={{ ...th, borderRadius: "0 0 0 0" }}>
+                          Menu Item
+                        </th>
+                        <th style={{ ...th, textAlign: "right", width: 70 }}>
+                          Qty
+                        </th>
+                        <th style={{ ...th, textAlign: "right", width: 100 }}>
+                          Sales Price
+                        </th>
+                        <th
+                          style={{
+                            ...th,
+                            textAlign: "right",
+                            width: 110,
+                            borderRight: "none",
+                          }}
+                        >
+                          Tot Item Price
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {b.items.map((it, i) => (
+                        <tr
+                          key={i}
+                          style={{
+                            background: i % 2 === 1 ? "#FCF7F3" : "#ffffff",
+                          }}
+                        >
+                          <td
+                            style={{
+                              ...td,
+                              fontWeight: 500,
+                              whiteSpace: "normal",
+                            }}
+                          >
+                            {it.name}
+                          </td>
+                          <td style={{ ...td, textAlign: "right" }}>
+                            {fmtQty(it.qty)}
+                          </td>
+                          <td style={{ ...td, textAlign: "right" }}>
+                            {fmtAmt(it.salesPrice)}
+                          </td>
+                          <td
+                            style={{
+                              ...td,
+                              textAlign: "right",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {fmtAmt(it.totItemPrice)}
+                          </td>
+                        </tr>
+                      ))}
+                      {b.items.length === 0 && (
+                        <tr>
+                          <td
+                            style={{
+                              ...td,
+                              color: "#907860",
+                              textAlign: "center",
+                            }}
+                            colSpan={4}
+                          >
+                            No items
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* totals box — POS PDF box eka wage */}
+                <div
+                  style={{
+                    flex: "0 1 270px",
+                    minWidth: 240,
+                    alignSelf: "flex-start",
+                    border: "1.5px solid #45301D",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    background: "#ffffff",
+                  }}
+                >
+                  {(() => {
+                    const t = b.totals;
+                    const rows: {
+                      label: string;
+                      value: number;
+                      strong?: boolean;
+                    }[] = [
+                      { label: "Gross", value: t.gross, strong: true },
+                      {
+                        label: t.discountPre
+                          ? `Discount (${fmtQty(t.discountPre)} %)`
+                          : "Discount",
+                        value: t.discount,
+                      },
+                      { label: "Gross After Dis.", value: t.grossAfterDis },
+                      { label: "Service Charge", value: t.serviceCharge },
+                      {
+                        label: "Other Service Charge",
+                        value: t.otherServiceCharge,
+                      },
+                      { label: "VAT", value: t.vat },
+                      { label: "Other Vat", value: t.otherVat },
+                      { label: "TDL", value: t.tdl },
+                      { label: "Packing Charge", value: t.packingCharge },
+                      { label: "Delivery Charge", value: t.deliveryCharge },
+                      { label: "Net Total", value: t.netTotal, strong: true },
+                    ];
+                    return rows.map((r, i) => (
+                      <div
+                        key={r.label}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: r.strong ? "8px 12px" : "5.5px 12px",
+                          fontSize: r.strong ? 12 : 11.5,
+                          fontWeight: r.strong ? 700 : 400,
+                          color: r.strong ? "#45301D" : "#684830",
+                          background: r.strong ? "#FCF7F3" : "#ffffff",
+                          borderTop:
+                            i === 0
+                              ? "none"
+                              : r.strong
+                              ? "2px solid #45301D"
+                              : "1px solid #FCF7F3",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        <span>{r.label}</span>
+                        <span style={{ fontWeight: r.strong ? 800 : 500 }}>
+                          {fmtAmt(r.value)}
+                        </span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          </div>
+          )}))} />
+
+          {/* footer strip — location totals */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "9px 14px",
+              background: "#FCF7F3",
+              fontSize: 11,
+              color: "#6B543E",
+            }}
+          >
+            <span>
+              {loc.dateGroups.reduce((s, g) => s + g.bills.length, 0)} bill
+              {loc.dateGroups.reduce((s, g) => s + g.bills.length, 0) === 1 ? "" : "s"} •
+              net total {fmtAmt(loc.locNetTotal)}
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 99,
+                  background: "#22c55e",
+                  display: "inline-block",
+                }}
+              />
+              Live data
+            </span>
+          </div>
+        </div>
+      ))}
+
+      {/* ── Grand total banner ── */}
+      <div
+        style={{
+          marginTop: 16,
+          borderRadius: 14,
+          overflow: "hidden",
+          background: grad,
+          padding: "15px 18px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          boxShadow: "0 4px 14px rgba(114,86,60,0.25)",
+        }}
+      >
+        <span
+          style={{
+            color: "#E4D6BF",
+            fontSize: 13,
+            fontWeight: 700,
+            letterSpacing: 0.8,
+            textTransform: "uppercase",
+          }}
+        >
+          Grand Total — {billCount} bills
+        </span>
+        <span
+          style={{
+            color: "#ffffff",
+            fontSize: 20,
+            fontWeight: 800,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          Rs. {fmtAmt(report.grandNetTotal)}
+        </span>
+      </div>
+    </div>
+  );
+}

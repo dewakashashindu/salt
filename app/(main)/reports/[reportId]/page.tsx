@@ -1,0 +1,2263 @@
+"use client";
+import SkeletonLoader from "@/components/SkeletonLoader";
+import ReportEmptyState from "@/components/reports/ReportEmptyState";
+import "@/components/reports/report-screen-font.css";
+import {useFeedbackState} from "@/components/FeedbackPopup";
+import {displayMessage} from "@/lib/displayMessage";
+import {TableStewardReport,TableStewardPdf,filterTableSteward,type TableStewardData} from "@/components/reports/TableStewardReport";
+import { ComplimentaryCostReport, ComplimentaryCostPdf, filterComplimentaryCost, type ComplimentaryCostData } from "@/components/reports/ComplimentaryCostReport";
+
+// ============================================================
+// LOCATION: app/(main)/reports/[reportId]/page.tsx
+// FULL REPLACE — unified report page (identical structure for
+// ALL reports — generic table + sales-summary custom render):
+//   • single fetch effect (sales summary includes)
+//   • toolbar (search/dates/zoom/chart/share/PDF) — same props
+//   • page-level loading + error blocks (same style)
+//   • sales summary gets pdfDocument too (share/PDF identical)
+// ============================================================
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+const UNAUTHORIZED_ERROR = "UNAUTHORIZED";
+import { REPORTS_CONFIG } from "@/config/reports.config";
+import DynamicReportTable from "@/components/reports/DynamicReportTable";
+import ReportToolbar from "@/components/ReportToolbar";
+import ReportChartsView from "@/components/reports/ReportChartsView";
+import { buildReportCharts } from "@/components/reports/reportCharts";
+import { complimentaryCharts, taxPosCharts, voidPosCharts, invoiceCharts, paymentTotalsCharts, performanceCharts, creditHistoryPosCharts, serviceChargeCharts, tableStewardCharts } from "@/components/reports/specialReportCharts";
+import ReportPdfDocument from "@/components/reports/ReportPdfDocument";
+import SalesSummaryReport, {
+  filterSalesSummary,
+} from "@/components/reports/SalesSummaryReport";
+import SalesDetailsReport, {
+  filterSalesDetails,
+  type SalesDetailsData,
+} from "@/components/reports/SalesDetailsReport";
+import SalesSummaryPdfDocument from "@/components/reports/SalesSummaryPdfDocument";
+import SalesDetailsPdfDocument from "@/components/reports/SalesDetailsPdfDocument";
+import CategorySummaryReport, {
+  CategoryDetailReport,
+  filterCategorySummary,
+  filterCategoryDetail,
+  type CatSummaryData,
+  type CatDetailData,
+} from "@/components/reports/CategoryReports";
+import {
+  CategorySummaryPdfDocument,
+  CategoryDetailPdfDocument,
+} from "@/components/reports/CategoryPdfDocuments";
+import PaymentSummaryReport, {
+  filterPayments,
+  type PaymentSummaryData,
+} from "@/components/reports/PaymentReports";
+import {PaymentTypes,DailyPayments,PaymentTotalsPdf,filterTypes,filterDaily,type TypesData,type DailyData} from "@/components/reports/PaymentPosTotals";
+import PaymentSummaryPdfDocument from "@/components/reports/PaymentPdfDocument";
+import BillPayModeGridReport, {
+  filterPayGrid,
+  type BillPayModeGridData,
+} from "@/components/reports/PaymentGridReports";
+import BillPayModeGridPdfDocument from "@/components/reports/PaymentGridPdfDocument";
+import TransactionSummaryReport, {
+  filterTxnSummary,
+  flattenTxnForPdf,
+  TXN_PDF_COLUMNS,
+  type TxnSummaryData,
+} from "@/components/reports/TransactionSummaryReport";
+import CreditHistoryPos, { CreditHistoryPosPdf, creditFilter, type CreditData } from "@/components/reports/CreditHistoryPos";
+import InvoiceTraceReport, { InvoiceTracePdf, type InvoiceData } from "@/components/reports/InvoiceTraceReport";
+import ServiceChargeReport, { ServiceChargePdf, serviceFilter, stewardLabel, type ServiceData } from "@/components/reports/ServiceChargeReport";
+import StewardSummaryReport, {
+  filterSteward,
+  flattenStewardForPdf,
+  STW_PDF_COLUMNS,
+  type StewardData,
+} from "@/components/reports/StewardReports";
+import {TaxPosReport,TaxPosPdf,filterTaxPos,type TaxPosData} from "@/components/reports/TaxPosReport";
+import VoidPosReport, { VoidPosPdf, filterVoidPos, type VoidPosData } from "@/components/reports/VoidPosReport";
+import PaxCountReport, {
+  filterPax,
+  PaxCountPdfDocument,
+  type PaxData,
+} from "@/components/reports/PaxCountReport";
+import OpenTablesReport, {
+  filterOpen,
+  openToRows,
+  OpenTablesPdfDocument,
+  type OpenTablesData,
+} from "@/components/reports/OpenTablesReport";
+import TraceReport, {
+  filterTrace,
+  traceToRows,
+  TracePdfDocument,
+  type TraceData,
+} from "@/components/reports/TraceReport";
+import CreditSummaryReport, {
+  filterCreditSummary,
+  credSumToRows,
+  CreditSummaryPdfDocument,
+  type CreditSummaryData,
+} from "@/components/reports/CreditSummaryReport";
+import CreditHistoryReport, {
+  filterCreditHistory,
+  credHistToRows,
+  CreditHistoryPdfDocument,
+  type CreditHistoryData,
+} from "@/components/reports/CreditHistoryReport";
+import HourlySalesReport, {
+  filterHourly,
+  hourlyToRows,
+  HourlySalesPdfDocument,
+  type HourlySalesData,
+} from "@/components/reports/HourlySalesReport";
+import {
+  BillTypeReport,
+  filterBillType,
+  billTypeToRows,
+  BillTypePdfDocument,
+  CashierCollectionReport,
+  filterCc,
+  ccToRows,
+  CashierCollectionPdfDocument,
+  CashierBreakdownReport,
+  filterCbd,
+  cbdToRows,
+  CashierBreakdownPdfDocument,
+  type BillTypeData,
+  type CcData,
+  type CbdData,
+} from "@/components/reports/CashierReports";
+import MenuItemIssueReport, {
+  MenuItemIssueByDateReport,
+  filterMii,
+  miiToRows,
+  MenuItemIssuePdfDocument,
+  type MiiData,
+} from "@/components/reports/MenuItemIssueReports";
+import ItemMovementReport, {
+  filterImv,
+  imvToRows,
+  ItemMovementPdfDocument,
+  type ImvData,
+  type ImvMode,
+} from "@/components/reports/ItemMovementReport";
+import CashInOutReport, {
+  filterCio,
+  cioToRows,
+  CashInOutPdfDocument,
+  type CioData,
+} from "@/components/reports/CashInOutReport";
+import TxnLogReport, {
+  filterTxnLog,
+  TxnLogPdfDocument,
+  type TxnLogData,
+} from "@/components/reports/TxnLogReport";
+import KotBotReport, {
+  filterKot,
+  kotToRows,
+  KotBotPdfDocument,
+  type KotData,
+} from "@/components/reports/KotBotReport";
+import PaymentHistoryReport, {
+  AccountDetailReport,
+  filterCph,
+  cphToRows,
+  filterCad,
+  cadToRows,
+  PaymentHistoryPdfDocument,
+  AccountDetailPdfDocument,
+  type CphData,
+  type CadData,
+} from "@/components/reports/CreditSettlementReports";
+import PerformanceReport, {
+  filterPerformanceReport,
+  PerformancePdfDocument,
+  type PerformanceReportData,
+} from "@/components/reports/PerformanceReport";
+import {
+  getReportPaymentModesAction,
+  getInvoiceTraceAction,
+  getLocationsAction,
+} from "@/app/actions/reports";
+import type { DateRangeFilterSpec } from "@/components/DateRangeModal";
+
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const p2 = (n: number) => String(n).padStart(2, "0");
+const fmtDMonY = (iso: string) => {
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${MONTHS[Number(m) - 1]}/${y}`;
+};
+
+// ── shared loading block (identical for every report) ──
+function PerformanceLoadingBlock() {
+  return (
+    <div style={{ padding: "60px 20px", textAlign: "center" }}>
+      <style>{`@keyframes rep-spin{to{transform:rotate(360deg)}}`}</style>
+      <svg
+        width="30"
+        height="30"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="#907860"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        style={{
+          margin: "0 auto 12px",
+          display: "block",
+          animation: "rep-spin 0.9s linear infinite",
+        }}
+      >
+        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+      </svg>
+      <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#6B543E" }}>
+        Loading Report Data...
+      </p>
+    </div>
+  );
+}
+
+function LoadingBlock(){ return <SkeletonLoader label="Loading report data…"/>; }
+
+// ── shared error banner (identical for every report) ──
+function ErrorBlock({ message }: { message: string }) {
+  return (
+    <div style={{ padding: "18px 24px 0" }}>
+      <div
+        style={{
+          background: "#fef2f2",
+          border: "1px solid #fecaca",
+          color: "#b91c1c",
+          fontSize: 13,
+          fontWeight: 500,
+          borderRadius: 10,
+          padding: "11px 15px",
+        }}
+      >
+        {displayMessage(message)}
+      </div>
+    </div>
+  );
+}
+
+// ── shared on-screen Location + Extra Filter (Bill Type / Order Mode / Pay Mode) switcher bar ──
+function ReportFilterBar({
+  locations,
+  selectedLoc,
+  onSelectLoc,
+  extraFilter,
+  extraValue,
+  onExtraChange,
+}: {
+  locations: { code: string; name: string }[];
+  selectedLoc: string;
+  onSelectLoc: (code: string) => void;
+  extraFilter?: DateRangeFilterSpec;
+  extraValue?: string;
+  onExtraChange?: (val: string) => void;
+}) {
+  if (locations.length === 0 && !extraFilter) return null;
+
+  const pillStyle = (active: boolean): React.CSSProperties => ({
+    height: 32,
+    padding: "0 13px",
+    borderRadius: 8,
+    border: active ? "1px solid #45301D" : "1px solid #DECBB0",
+    background: active
+      ? "linear-gradient(135deg,#45301D 0%,#684830 100%)"
+      : "#FCF7F3",
+    color: active ? "#ffffff" : "#684830",
+    fontSize: 12,
+    fontWeight: active ? 700 : 600,
+    fontFamily: "Inter, sans-serif",
+    cursor: "pointer",
+    boxShadow: active ? "0 2px 6px rgba(69,48,29,0.18)" : "none",
+    transition: "all 0.14s ease",
+    whiteSpace: "nowrap",
+  });
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    color: "#7C6148",
+    marginRight: 2,
+    whiteSpace: "nowrap",
+  };
+
+  return (
+    <div style={{ padding: "12px 24px 0", fontFamily: "Inter, sans-serif" }}>
+      <div
+        style={{
+          padding: "11px 14px",
+          background: "#FFFFFF",
+          border: "1px solid #E4D6BF",
+          borderRadius: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          boxShadow: "0 1px 3px rgba(114,86,60,0.04)",
+        }}
+      >
+        {locations.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={labelStyle}>Location:</span>
+            <button
+              type="button"
+              onClick={() => onSelectLoc("")}
+              style={pillStyle(selectedLoc === "")}
+            >
+              All Locations
+            </button>
+            {locations.map((l) => {
+              const active = selectedLoc === l.code;
+              return (
+                <button
+                  key={l.code}
+                  type="button"
+                  onClick={() => onSelectLoc(l.code)}
+                  style={pillStyle(active)}
+                >
+                  {l.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {locations.length > 0 && extraFilter && (
+          <div
+            style={{
+              width: "100%",
+              height: 1,
+              background: "#EFE5D6",
+            }}
+          />
+        )}
+
+        {extraFilter && onExtraChange && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={labelStyle}>{extraFilter.label}:</span>
+            <button
+              type="button"
+              onClick={() => onExtraChange("")}
+              style={pillStyle(!extraValue)}
+            >
+              All
+            </button>
+            {extraFilter.options.map((opt) => {
+              const active = extraValue === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => onExtraChange(opt.value)}
+                  style={pillStyle(active)}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function DynamicReportPage() {
+  const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const reportId = params?.reportId as string;
+  const config = REPORTS_CONFIG[reportId];
+
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useFeedbackState<string | null>(null,'error');
+  const [search, setSearch] = useState("");
+  const [chartMode, setChartMode] = useState(false);
+  const [printedAt] = useState(() => new Date());
+  const [invoiceNo, setInvoiceNo] = useState("");
+  const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [invoiceError, setInvoiceError] = useFeedbackState<string>("",'error');
+  const invoiceRequest = useRef(0);
+
+  // URL params: ?from=YYYY-MM-DD&to=YYYY-MM-DD (sidebar date popup eken)
+  // local date — toISOString UTC nisa day shift wenna (31/Dec bug)
+  const p2l = (n: number) => String(n).padStart(2, "0");
+  const localIso = (d: Date) =>
+    `${d.getFullYear()}-${p2l(d.getMonth() + 1)}-${p2l(d.getDate())}`;
+  const yearStart = localIso(
+    new Date(new Date().getFullYear(), 0, 1)
+  );
+  const today = localIso(new Date());
+
+  const [startDate, setStartDate] = useState(
+    searchParams.get("from") ||
+      (reportId === "performance-report" ? today : yearStart)
+  );
+  const [endDate, setEndDate] = useState(searchParams.get("to") || today);
+  const [loc, setLoc] = useState(searchParams.get("loc") || "");
+  const [orderMode, setOrderMode] = useState(searchParams.get("om") || "");
+  const [billType, setBillType] = useState(searchParams.get("bt") || "");
+  const [payMode, setPayMode] = useState(searchParams.get("pm") || "");
+  const [miiCost, setMiiCost] = useState(false);
+  const [miiSort, setMiiSort] = useState<'description'|'quantity'>('description');
+  const [miiDept, setMiiDept] = useState('');
+  const [imvMode, setImvMode] = useState<ImvMode>("fast");
+  const [imvThr, setImvThr] = useState(10);
+  const [cioCat, setCioCat] = useState("");
+  const [kotType, setKotType] = useState("all");
+  const [txnUserSel, setTxnUserSel] = useState("");
+  const [txnTypeSel, setTxnTypeSel] = useState("");
+  const [credCus, setCredCus] = useState("");
+  const [cashSel, setCashSel] = useState("");
+  const [stewardSelection, setStewardSelection] = useState("all");
+  const [creditCustomerSelection, setCreditCustomerSelection] = useState("all");
+  const [voidDetail, setVoidDetail] = useState(false);
+  const [paymentModes, setPaymentModes] = useState<{ value: string; label: string }[]>([]);
+  const [paymentModesError, setPaymentModesError] = useFeedbackState<string>("",'error');
+  const [allLocs, setAllLocs] = useState<{ code: string; name: string }[]>([]);
+
+  useEffect(() => {
+    if (reportId !== "payment-summary-wise") return;
+    let alive = true;
+    setPaymentModes([]);
+    setPaymentModesError("");
+    getReportPaymentModesAction().then(res => {
+      if (!alive) return;
+      if (res.success && Array.isArray(res.data)) setPaymentModes(res.data);
+      else setPaymentModesError(res.error || "Failed to load payment modes");
+    }).catch(() => { if (alive) setPaymentModesError("Failed to load payment modes"); });
+    return () => { alive = false; };
+  }, [reportId]);
+
+  // Load main outlets once so every report page can switch All Locations / Loc 1 / Loc 2 on screen
+  useEffect(() => {
+    if (reportId === "performance-report") return;
+    let alive = true;
+    getLocationsAction()
+      .then((res) => {
+        if (alive && res?.success && Array.isArray(res.data)) {
+          setAllLocs(res.data);
+          if (!searchParams.get("loc") && 'defaultLocation' in res && res.defaultLocation) setLoc(res.defaultLocation);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // URL change (sidebar modal eken aluth range) -> state update
+  useEffect(() => {
+    const f = searchParams.get("from");
+    const t = searchParams.get("to");
+    if (reportId === "performance-report") {
+      if (f) {
+        setStartDate(f);
+        setEndDate(f);
+      }
+      const qLoc = searchParams.get("loc");
+      if (qLoc) setLoc(qLoc);
+      return;
+    }
+    if (f) setStartDate(f);
+    if (t) setEndDate(t);
+    setLoc(searchParams.get("loc") || "");
+    setOrderMode(searchParams.get("om") || "");
+    setBillType(searchParams.get("bt") || "");
+    setPayMode(searchParams.get("pm") || "");
+  }, [searchParams, reportId]);
+
+  // ── single fetch effect — ALL reports (sales summary includes) ──
+  useEffect(() => {
+    if (!config || reportId === "invoice-trace") return;
+    let alive = true;
+    const goLogin = () => {
+      if (alive) router.replace("/login");
+    };
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await config.fetchAction({
+          reportId,
+          startDate,
+          endDate,
+          outletId: loc || undefined,
+          orderMode: orderMode || undefined,
+          billType: billType || config.lockBillType || undefined,
+          payMode: payMode || undefined,
+          withCost: miiCost || undefined,
+          menuIssueByDate: config.render === "mii-date",
+          salesDept: config.render === "mii" ? miiDept || undefined : undefined,
+          movement: imvMode,
+          threshold: imvThr,
+          payCat: cioCat || undefined,
+          trcType: kotType,
+          txnUser: txnUserSel || undefined,
+          txnType: txnTypeSel || undefined,
+          cusId: credCus || undefined,
+          cashier: cashSel || undefined,
+        });
+        if (!alive) return;
+        if (res?.error === UNAUTHORIZED_ERROR) {
+          goLogin();
+          return;
+        }
+        if (res?.success && res.data != null) {
+          setData(res.data);
+        } else {
+          setData(null);
+          setError(res?.error || "Failed to load report data");
+        }
+      } catch (e: any) {
+        if (!alive) return;
+        if (e?.message === UNAUTHORIZED_ERROR) {
+          goLogin();
+          return;
+        }
+        setData(null);
+        setError(e?.message || "Failed to load report data");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [reportId, config, startDate, endDate, loc, orderMode, billType, payMode, miiCost, miiDept, imvMode, imvThr, cioCat, kotType, txnUserSel, txnTypeSel, credCus, cashSel, router]);
+
+  useEffect(() => {
+    invoiceRequest.current++;
+    setInvoiceData(null); setInvoiceError(""); setInvoiceBusy(false);
+  }, [reportId, loc]);
+
+  // reset view state on report change
+  useEffect(() => {
+    setSearch("");
+    setTxnUserSel("");
+    setTxnTypeSel("");
+    setStewardSelection("all");
+    setCreditCustomerSelection("all");
+    setChartMode(false);
+  }, [reportId]);
+
+  // generic rows (array data) + search filter
+  const rows: any[] = Array.isArray(data) ? data : [];
+  const filteredRows = useMemo(() => {
+    if (!search.trim()) return rows;
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) =>
+      Object.values(row ?? {}).some((v) =>
+        String(v ?? "").toLowerCase().includes(q)
+      )
+    );
+  }, [rows, search]);
+
+  // ✅ Analytics — generic rows reports walata (browser athulema aggregate)
+  const chartsRows = buildReportCharts(reportId, filteredRows);
+
+  const objectData = data && !Array.isArray(data) ? (data as any) : null;
+  const summary = config?.render === "sales-summary" ? objectData : null;
+  const filteredSummary = useMemo(
+    () => (summary ? filterSalesSummary(summary, search) : null),
+    [summary, search]
+  );
+
+  // ── hooks dariyata PASSEDU early returns ──
+  if (!config) {
+    return (
+      <div
+        style={{
+          padding: "60px 20px",
+          textAlign: "center",
+          fontFamily: "Inter, sans-serif",
+        }}
+      >
+        <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#684830" }}>
+          Report Not Found.
+        </p>
+      </div>
+    );
+  }
+
+  const printDate = `${p2(printedAt.getDate())}-${
+    MONTHS[printedAt.getMonth()]
+  }-${printedAt.getFullYear()}`;
+  const printTime = (() => {
+    let h = printedAt.getHours();
+    const ap = h >= 12 ? "pm" : "am";
+    h = h % 12 || 12;
+    return `${h}:${p2(printedAt.getMinutes())}:${p2(printedAt.getSeconds())} ${ap}`;
+  })();
+
+  const rangeChange = (f: string, t: string) => {
+    setStartDate(f);
+    setEndDate(t);
+  };
+
+  const extraFilter = reportId === "payment-summary-wise" && config.filter
+    ? { ...config.filter, options: paymentModes } : config.filter;
+  const extraValue =
+    extraFilter?.param === "om"
+      ? orderMode
+      : extraFilter?.param === "bt"
+        ? billType
+        : extraFilter?.param === "pm"
+          ? payMode
+          : "";
+  const handleExtraChange = (val: string) => {
+    if (!extraFilter) return;
+    if (extraFilter.param === "om") setOrderMode(val);
+    else if (extraFilter.param === "bt") setBillType(val);
+    else if (extraFilter.param === "pm") setPayMode(val);
+  };
+
+  const filterBarNode =
+    config.render !== "performance-report" ? (
+      <>
+      <ReportFilterBar
+        locations={allLocs}
+        selectedLoc={loc}
+        onSelectLoc={setLoc}
+        extraFilter={extraFilter}
+        extraValue={extraValue}
+        onExtraChange={handleExtraChange}
+      />
+      {paymentModesError && reportId === "payment-summary-wise" && <p role="alert" style={{ color: "#b91c1c", padding: "0 24px" }}>{displayMessage(paymentModesError)}</p>}
+      </>
+    ) : null;
+
+  // ── Sales Summary (custom render — SAME toolbar/loading/error/chart) ──
+  if (config.render === "sales-summary") {
+    const hasSumData =
+      !loading &&
+      !error &&
+      Boolean(filteredSummary && (filteredSummary.locationGroups?.length ?? 0) > 0);
+    const chartsSum = hasSumData
+      ? buildReportCharts(reportId, filteredSummary)
+      : [];
+
+    const pdfDoc = hasSumData && filteredSummary ? (
+      <SalesSummaryPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        locationGroups={filteredSummary.locationGroups}
+        grandTotal={filteredSummary.grandTotal}
+      />
+    ) : undefined;
+
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search bill no, steward, mode..."
+          pdfDocument={pdfDoc}
+          pdfFileName={`sales-summary-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasSumData && chartsSum.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasSumData && chartsSum.length > 0 ? (
+            <ReportChartsView charts={chartsSum} title={config.title} />
+          ) : filteredSummary ? (
+            <SalesSummaryReport report={filteredSummary} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── Sales Details (custom render — bill-wise items + totals box) ──
+  if (config.render === "complimentary-cost") {
+    const data=objectData ? filterComplimentaryCost(objectData as unknown as ComplimentaryCostData,search) : null;
+    const hasData=!!data?.locations.length;
+    const pdf=hasData&&data?<ComplimentaryCostPdf title={config.title} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} printDate={printDate} printTime={printTime} data={data}/>:undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search location, date, bill or item..." pdfDocument={pdf} pdfFileName={`complimentary-cost-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)} />{filterBarNode}<div id="report-zoom-area" style={{flex:1}}>{loading?<LoadingBlock/>:error?<ErrorBlock message={error}/>:data?(chartMode?<ReportChartsView charts={complimentaryCharts(data)} title={config.title}/>:<ComplimentaryCostReport data={data}/>):null}</div></>;
+  }
+
+  if (config.render === "sales-details") {
+    const details = objectData
+      ? (objectData as unknown as SalesDetailsData)
+      : null;
+    const filteredDetails = details
+      ? filterSalesDetails(details, search)
+      : null;
+    const hasDetData =
+      !loading &&
+      !error &&
+      Boolean(filteredDetails && (filteredDetails.locationGroups?.length ?? 0) > 0);
+
+    const chartsDet = hasDetData
+      ? buildReportCharts(reportId, filteredDetails)
+      : [];
+
+    const pdfDocDetails = hasDetData && filteredDetails ? (
+      <SalesDetailsPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        locationGroups={filteredDetails.locationGroups}
+      />
+    ) : undefined;
+
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search bill no, item, steward..."
+          pdfDocument={pdfDocDetails}
+          pdfFileName={`sales-details-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasDetData && chartsDet.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasDetData && chartsDet.length > 0 ? (
+            <ReportChartsView charts={chartsDet} title={config.title} />
+          ) : filteredDetails ? (
+            <SalesDetailsReport report={filteredDetails} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── Sales By Category – Summery (1.3.1) ──
+  if (config.render === "category-summary") {
+    const catSum = objectData
+      ? (objectData as unknown as CatSummaryData)
+      : null;
+    const filteredCats = catSum
+      ? filterCategorySummary(catSum, search)
+      : null;
+    const hasCatsData =
+      !loading &&
+      !error &&
+      Boolean(filteredCats && (filteredCats.locationGroups?.length ?? 0) > 0);
+    const chartsCats =
+      hasCatsData && filteredCats ? buildReportCharts(reportId, filteredCats) : [];
+    const pdfDocCat = hasCatsData && filteredCats ? (
+      <CategorySummaryPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredCats}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search category, item..."
+          pdfDocument={pdfDocCat}
+          pdfFileName={`category-summary-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasCatsData && chartsCats.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasCatsData && chartsCats.length > 0 ? (
+            <ReportChartsView charts={chartsCats} title={config.title} />
+          ) : filteredCats ? (
+            <CategorySummaryReport report={filteredCats} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── Sales By Category – Detail (1.3.2) ──
+  if (config.render === "category-detail") {
+    const catDet = objectData
+      ? (objectData as unknown as CatDetailData)
+      : null;
+    const filteredCatDet = catDet
+      ? filterCategoryDetail(catDet, search)
+      : null;
+    const hasCatDetData =
+      !loading &&
+      !error &&
+      Boolean(filteredCatDet && (filteredCatDet.locationGroups?.length ?? 0) > 0);
+    const chartsCatDet =
+      hasCatDetData && filteredCatDet
+        ? buildReportCharts(reportId, filteredCatDet)
+        : [];
+    const pdfDocCatDet = hasCatDetData && filteredCatDet ? (
+      <CategoryDetailPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredCatDet}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search bill no, item, steward..."
+          pdfDocument={pdfDocCatDet}
+          pdfFileName={`category-detail-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasCatDetData && chartsCatDet.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasCatDetData && chartsCatDet.length > 0 ? (
+            <ReportChartsView charts={chartsCatDet} title={config.title} />
+          ) : filteredCatDet ? (
+            <CategoryDetailReport report={filteredCatDet} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── Payment Mode – Payment Summary (2.1 / 2.2) ──
+  if (config.render === "payment-summary") {
+    const payData = objectData
+      ? (objectData as unknown as PaymentSummaryData)
+      : null;
+    const filteredPays = payData ? filterPayments(payData, search) : null;
+    const hasPayData =
+      !loading &&
+      !error &&
+      Boolean(filteredPays && (filteredPays.locationGroups?.length ?? 0) > 0);
+    const chartsPays =
+      hasPayData && filteredPays ? buildReportCharts(reportId, filteredPays) : [];
+    const pdfDocPays = hasPayData && filteredPays ? (
+      <PaymentSummaryPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredPays}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search bill no, payment mode, casher..."
+          pdfDocument={pdfDocPays}
+          pdfFileName={`payment-summary-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasPayData && chartsPays.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasPayData && chartsPays.length > 0 ? (
+            <ReportChartsView charts={chartsPays} title={config.title} />
+          ) : filteredPays ? (
+            <PaymentSummaryReport report={filteredPays} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 2.3 Payment – Bill Pay Mode Wise Grid ──
+  if (config.render === "payment-grid") {
+    const gridData = objectData
+      ? (objectData as unknown as BillPayModeGridData)
+      : null;
+    const filteredGrid = gridData ? filterPayGrid(gridData, search) : null;
+    const hasGridData =
+      !loading &&
+      !error &&
+      Boolean(filteredGrid && (filteredGrid.locationGroups?.length ?? 0) > 0);
+    const chartsGrid =
+      hasGridData && filteredGrid ? buildReportCharts(reportId, filteredGrid) : [];
+    const pdfDocGrid = hasGridData && filteredGrid ? (
+      <BillPayModeGridPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredGrid}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search bill no, pay mode..."
+          pdfDocument={pdfDocGrid}
+          pdfFileName={`bill-paymode-grid-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasGridData && chartsGrid.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        {(gridData as unknown as { cashiers?: Array<{ id: string; des: string }> } | null)?.cashiers?.length ? (
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              padding: "10px 24px 0",
+              fontFamily: "Inter, sans-serif",
+              fontSize: 12,
+              color: "#684830",
+              alignItems: "center",
+            }}
+          >
+            <label style={{ fontWeight: 600 }}>Cashier</label>
+            <select
+              value={cashSel}
+              onChange={(e) => setCashSel(e.target.value)}
+              style={{
+                padding: "5px 8px",
+                border: "1px solid #C8B8A8",
+                borderRadius: 6,
+                fontFamily: "Inter, sans-serif",
+                fontSize: 12,
+                background: "#fff",
+                minWidth: 180,
+              }}
+            >
+              <option value="">— All Cashiers —</option>
+              {(gridData as unknown as { cashiers: Array<{ id: string; des: string }> }).cashiers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id} · {c.des}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasGridData && chartsGrid.length > 0 ? (
+            <ReportChartsView charts={chartsGrid} title={config.title} />
+          ) : filteredGrid ? (
+            <BillPayModeGridReport report={filteredGrid} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 7.1 Transaction Summary By Date (Vw_DailyPerformance) ──
+  if (config.render === "transaction-summary") {
+    const txnData = objectData
+      ? (objectData as unknown as TxnSummaryData)
+      : null;
+    const filteredTxn = txnData ? filterTxnSummary(txnData, search) : null;
+    const hasTxnData =
+      !loading &&
+      !error &&
+      Boolean(filteredTxn && (filteredTxn.locationGroups?.length ?? 0) > 0);
+    const chartsTxn =
+      hasTxnData && filteredTxn ? buildReportCharts(reportId, filteredTxn) : [];
+    const pdfDocTxn = hasTxnData && filteredTxn ? (
+      <ReportPdfDocument
+        title={config.title}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        columns={TXN_PDF_COLUMNS}
+        data={flattenTxnForPdf(filteredTxn)}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search date, location..."
+          pdfDocument={pdfDocTxn}
+          pdfFileName={`transaction-summary-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasTxnData && chartsTxn.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasTxnData && chartsTxn.length > 0 ? (
+            <ReportChartsView charts={chartsTxn} title={config.title} />
+          ) : filteredTxn ? (
+            <TransactionSummaryReport report={filteredTxn} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // Service charge uses bill-level DI rows, not the steward daily-summary renderer.
+  if (config.id === "service-charge") {
+    const report = objectData as ServiceData | null;
+    const rows = report ? serviceFilter(report, stewardSelection, search) : [];
+    const options = new Map<string, string>();
+    for (const r of report?.rows ?? []) { const k = `s:${r.stewardId}`; if (!options.has(k) || (!options.get(k)?.includes(" — ") && r.stewardName)) options.set(k, stewardLabel(r)); }
+    const pdf = rows.length ? <ServiceChargePdf rows={rows} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} /> : undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search bill, steward, location, date..." pdfDocument={pdf} pdfFileName={`service-charge-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)} />
+      {filterBarNode}
+      <div style={{padding:"10px 24px",color:"#684830",fontSize:12}}><label>Steward: <select aria-label="Steward" value={stewardSelection} onChange={e=>setStewardSelection(e.target.value)} style={{marginLeft:8,padding:"7px 10px",border:"1px solid #decbb0",borderRadius:8,background:"white",color:"#45301d"}}><option value="all">All Stewards</option>{stewardSelection !== "all" && !options.has(stewardSelection) && <option value={stewardSelection}>Selected steward (no records)</option>}{Array.from(options).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label></div>
+      <div id="report-zoom-area" style={{flex:1}}>{loading ? <LoadingBlock/> : error ? <ErrorBlock message={error}/> : chartMode ? <ReportChartsView charts={serviceChargeCharts(rows)} title={config.title}/> : <ServiceChargeReport rows={rows}/>}</div>
+    </>;
+  }
+
+  // ── 6.1 / 8.1 Steward Wise & Service Charge ──
+  if (config.render === "table-steward") {
+    const report=objectData as unknown as TableStewardData | null;
+    const options=new Map<string,string>();for(const l of report?.locations??[])for(const st of l.stewards)options.set(`s:${st.id}`,`${st.id||'Unassigned'}${st.name?` — ${st.name}`:''}`);
+    const filtered=report?filterTableSteward(report,stewardSelection,search):null;
+    const hasData=!!filtered?.locations.length;
+    const pdf=hasData&&filtered?<TableStewardPdf data={filtered} title={config.title} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} printDate={printDate} printTime={printTime}/>:undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search steward, location, date or table..." pdfDocument={pdf} pdfFileName={`steward-table-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)}/>{filterBarNode}<div style={{padding:'10px 24px',color:'#684830',fontSize:12}}><label>Steward: <select aria-label="Steward" value={stewardSelection} onChange={e=>setStewardSelection(e.target.value)} style={{marginLeft:8,padding:'7px 10px',border:'1px solid #decbb0',borderRadius:8,background:'white'}}><option value="all">All Stewards</option>{stewardSelection!=='all'&&!options.has(stewardSelection)&&<option value={stewardSelection}>Selected steward (no records)</option>}{Array.from(options,([id,label])=><option key={id} value={id}>{label}</option>)}</select></label></div><div id="report-zoom-area" style={{flex:1}}>{loading?<LoadingBlock/>:error?<ErrorBlock message={error}/>:filtered?(chartMode?<ReportChartsView charts={tableStewardCharts(filtered)} title={config.title}/>:<TableStewardReport data={filtered}/>):null}</div></>;
+  }
+
+  if (config.render === "steward-wise") {
+    const stwData = objectData
+      ? (objectData as unknown as StewardData)
+      : null;
+    const selectedStewardId = stewardSelection === "all" ? undefined : stewardSelection.slice(2);
+    const filteredStw = stwData ? filterSteward(stwData, search, config.id === "steward-wise" ? selectedStewardId : undefined) : null;
+    const hasStwData =
+      !loading &&
+      !error &&
+      Boolean(filteredStw && (filteredStw.stewards?.length ?? 0) > 0);
+    const chartsStw =
+      hasStwData && filteredStw ? buildReportCharts(reportId, filteredStw) : [];
+    const pdfDocStw = hasStwData && filteredStw ? (
+      <ReportPdfDocument
+        title={config.title}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        columns={STW_PDF_COLUMNS}
+        data={flattenStewardForPdf(filteredStw)}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search steward, location, date..."
+          pdfDocument={pdfDocStw}
+          pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasStwData && chartsStw.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        {config.id === "steward-wise" && <div style={{padding:"10px 24px", color:"#684830", fontSize:12}}>
+          <label>Steward: <select aria-label="Steward" value={stewardSelection} onChange={e => setStewardSelection(e.target.value)} style={{marginLeft:8,padding:"7px 10px",border:"1px solid #decbb0",borderRadius:8,background:"white",color:"#45301d"}}>
+            <option value="all">All Stewards</option>
+            {stewardSelection !== "all" && !(stwData?.stewards ?? []).some(s => `s:${s.stewId}` === stewardSelection) && <option value={stewardSelection}>Selected steward (no records)</option>}
+            {(stwData?.stewards ?? []).map(s => <option key={s.stewId} value={`s:${s.stewId}`}>{s.stewId ? `${s.stewId}${s.stewName ? ` — ${s.stewName}` : ""}` : "Unassigned steward"}</option>)}
+          </select></label>
+        </div>}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasStwData && chartsStw.length > 0 ? (
+            <ReportChartsView charts={chartsStw} title={config.title} />
+          ) : filteredStw ? (
+            <StewardSummaryReport report={filteredStw} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 8.2 Tax & VAT Report ──
+  if (config.render === "tax-vat") {
+    const data=objectData as TaxPosData | null;
+    const rows=data?filterTaxPos(data.rows,search):[];
+    const pdf=rows.length?<TaxPosPdf rows={rows} title={config.title} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} printDate={printDate} printTime={printTime}/>:undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search location, date, bill or mode..." pdfDocument={pdf} pdfFileName={`tax-vat-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)}/>{filterBarNode}<div id="report-zoom-area" style={{flex:1}}>{loading?<LoadingBlock/>:error?<ErrorBlock message={error}/>:data?(chartMode?<ReportChartsView charts={taxPosCharts(rows)} title={config.title}/>:<TaxPosReport rows={rows}/>):null}</div></>;
+  }
+
+  // 10 Void Summary and Detail — Vw_VoidBeforeSettlement.
+  if (config.render === "void-report") {
+    const report = objectData as VoidPosData | null;
+    const rows = report ? filterVoidPos(report, search) : [];
+    const pdf = rows.length ? <VoidPosPdf rows={rows} detail={voidDetail} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} /> : undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search item, table, cashier..." pdfDocument={pdf} pdfFileName={`void-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)} />
+      {filterBarNode}
+      <div style={{padding:"10px 24px",fontSize:12,color:"#684830",display:"flex",gap:16}}><span>Report type:</span><label><input type="radio" checked={!voidDetail} onChange={()=>setVoidDetail(false)}/> Summary</label><label><input type="radio" checked={voidDetail} onChange={()=>setVoidDetail(true)}/> Details</label></div>
+      <div id="report-zoom-area" style={{flex:1}}>{loading ? <LoadingBlock/> : error ? <ErrorBlock message={error}/>  : chartMode ? <ReportChartsView charts={voidPosCharts(rows)} title={config.title}/> : <VoidPosReport rows={rows} detail={voidDetail}/>}</div>
+    </>;
+  }
+
+  // ── 11 Pax Count ──
+  if (config.render === "pax-count") {
+    const paxData = objectData
+      ? (objectData as unknown as PaxData)
+      : null;
+    const filteredPax = paxData ? filterPax(paxData, search) : null;
+    const hasPaxData =
+      !loading &&
+      !error &&
+      Boolean(filteredPax && (filteredPax.locationGroups?.length ?? 0) > 0);
+    const chartsPax =
+      hasPaxData && filteredPax ? buildReportCharts(reportId, filteredPax) : [];
+    const pdfDocPax = hasPaxData && filteredPax ? (
+      <PaxCountPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredPax}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search bill no, date..."
+          pdfDocument={pdfDocPax}
+          pdfFileName={`pax-count-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasPaxData && chartsPax.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasPaxData && chartsPax.length > 0 ? (
+            <ReportChartsView charts={chartsPax} title={config.title} />
+          ) : filteredPax ? (
+            <PaxCountReport report={filteredPax} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 12 Cash In/Out ──
+  if (config.render === "cash-inout") {
+    const cioData = objectData ? (objectData as unknown as CioData) : null;
+    const filteredCIO = cioData ? filterCio(cioData, search) : null;
+    const hasCioData =
+      !loading &&
+      !error &&
+      Boolean(filteredCIO && (filteredCIO.locationGroups?.length ?? 0) > 0);
+    const chartsCIO =
+      hasCioData && filteredCIO ? buildReportCharts(reportId, filteredCIO) : [];
+    const pdfDocCIO = hasCioData && filteredCIO ? (
+      <CashInOutPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredCIO}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search txn, category, remarks, user..."
+          pdfDocument={pdfDocCIO}
+          pdfFileName={`cash-inout-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasCioData && chartsCIO.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        {cioData && cioData.categories.length > 0 ? (
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              padding: "10px 24px 0",
+              fontFamily: "Inter, sans-serif",
+              fontSize: 12,
+              color: "#684830",
+              alignItems: "center",
+            }}
+          >
+            <label style={{ fontWeight: 600 }}>Include Category</label>
+            <select
+              value={cioCat}
+              onChange={(e) => setCioCat(e.target.value)}
+              style={{
+                padding: "5px 8px",
+                border: "1px solid #C8B8A8",
+                borderRadius: 6,
+                fontFamily: "Inter, sans-serif",
+                fontSize: 12,
+                background: "#fff",
+                minWidth: 180,
+              }}
+            >
+              <option value="">— All Categories —</option>
+              {cioData.categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id} · {c.des}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasCioData && chartsCIO.length > 0 ? (
+            <ReportChartsView charts={chartsCIO} title={config.title} />
+          ) : filteredCIO ? (
+            <CashInOutReport report={filteredCIO} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 16 KOT/BOT Tracing ──
+  if (config.render === "kot-bot") {
+    const kotData = objectData ? (objectData as unknown as KotData) : null;
+    const filteredKOT = kotData ? filterKot(kotData, search) : null;
+    const hasKotData =
+      !loading &&
+      !error &&
+      Boolean(filteredKOT && (filteredKOT.locations?.length ?? 0) > 0);
+    const chartsKOT =
+      hasKotData && filteredKOT ? buildReportCharts(reportId, filteredKOT) : [];
+    const pdfDocKOT = hasKotData && filteredKOT ? (
+      <KotBotPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredKOT}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search ordno, item, user, remark..."
+          pdfDocument={pdfDocKOT}
+          pdfFileName={`kot-bot-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasKotData && chartsKOT.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "10px 24px 0",
+            fontFamily: "Inter, sans-serif",
+            fontSize: 12,
+            color: "#684830",
+            alignItems: "center",
+          }}
+        >
+          <label style={{ fontWeight: 600 }}>Trc Type</label>
+          <select
+            value={kotType}
+            onChange={(e) => setKotType(e.target.value)}
+            style={{
+              padding: "5px 8px",
+              border: "1px solid #C8B8A8",
+              borderRadius: 6,
+              fontFamily: "Inter, sans-serif",
+              fontSize: 12,
+              background: "#fff",
+              minWidth: 140,
+            }}
+          >
+            <option value="all">All</option>
+            <option value="kitchen">Kitchen</option>
+            <option value="bar">Bar</option>
+            <option value="other">Other</option>
+            <option value="bay1">Bay 1</option>
+            <option value="bay2">Bay 2</option>
+            <option value="bay3">Bay 3</option>
+            <option value="bay4">Bay 4</option>
+            <option value="bay5">Bay 5</option>
+            <option value="bay6">Bay 6</option>
+            <option value="head">Heap</option>
+          </select>
+        </div>
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasKotData && chartsKOT.length > 0 ? (
+            <ReportChartsView charts={chartsKOT} title={config.title} />
+          ) : filteredKOT ? (
+            <KotBotReport report={filteredKOT} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+
+  // ── Transaction Log (Vw_TxnLog) ──
+  if (config.render === "transaction-log") {
+    const txnData = objectData ? (objectData as unknown as TxnLogData) : null;
+    const filteredTxn = txnData ? filterTxnLog(txnData, search) : null;
+    const hasTxnData = !loading && !error && Boolean(filteredTxn && filteredTxn.locations.length > 0);
+    const pdfDocTxn = hasTxnData && filteredTxn ? (
+      <TxnLogPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredTxn}
+      />
+    ) : undefined;
+    const selStyle = {
+      padding: "5px 8px",
+      border: "1px solid #C8B8A8",
+      borderRadius: 6,
+      fontFamily: "Inter, sans-serif",
+      fontSize: 12,
+      background: "#fff",
+      minWidth: 160,
+    } as const;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search type, remarks, user, workstation..."
+          pdfDocument={pdfDocTxn}
+          pdfFileName={`transaction-log-${startDate}_to_${endDate}.pdf`}
+          chartSupported={false}
+          chartMode={false}
+          onChartToggle={() => {}}
+        />
+        {filterBarNode}
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            flexWrap: "wrap",
+            padding: "10px 24px 0",
+            fontFamily: "Inter, sans-serif",
+            fontSize: 12,
+            color: "#684830",
+            alignItems: "center",
+          }}
+        >
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <label style={{ fontWeight: 600 }}>User</label>
+            <select value={txnUserSel} onChange={(e) => setTxnUserSel(e.target.value)} style={selStyle}>
+              <option value="">All Users</option>
+              {(txnData?.users ?? []).map((u) => (
+                <option key={u.id} value={u.id}>{u.id}{u.name && u.name !== u.id ? ` · ${u.name}` : ""}</option>
+              ))}
+            </select>
+          </span>
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <label style={{ fontWeight: 600 }}>Txn Type</label>
+            <select value={txnTypeSel} onChange={(e) => setTxnTypeSel(e.target.value)} style={selStyle}>
+              <option value="">All Types</option>
+              {(txnData?.types ?? []).map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </span>
+          {txnData?.truncated ? <span>Showing the first 5,000 records — narrow the range or filters.</span> : null}
+        </div>
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : filteredTxn ? (
+            <TxnLogReport report={filteredTxn} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 21.3 / 21.4 Credit Settlement — Payment History / Account Detail ──
+  if (config.render === "credit-pay-history" || config.render === "credit-account-detail") {
+    const isCph = config.render === "credit-pay-history";
+    const cphData = isCph && objectData ? (objectData as unknown as CphData) : null;
+    const cadData = !isCph && objectData ? (objectData as unknown as CadData) : null;
+    const filteredCPH = cphData ? filterCph(cphData, search) : null;
+    const filteredCAD = cadData ? filterCad(cadData, search) : null;
+    const hasCrData =
+      !loading &&
+      !error &&
+      Boolean(
+        (filteredCPH && (filteredCPH.locationGroups?.length ?? 0) > 0) ||
+          (filteredCAD && (filteredCAD.locationGroups?.length ?? 0) > 0)
+      );
+    const chartsCR = hasCrData
+      ? filteredCPH
+        ? buildReportCharts(reportId, filteredCPH)
+        : filteredCAD
+          ? buildReportCharts(reportId, filteredCAD)
+          : []
+      : [];
+    const custList = cphData ? cphData.customers : cadData ? cadData.customers : [];
+    const pdfDocCR = hasCrData
+      ? filteredCPH ? (
+          <PaymentHistoryPdfDocument
+            title={config.title}
+            printDate={printDate}
+            printTime={printTime}
+            from={fmtDMonY(startDate)}
+            to={fmtDMonY(endDate)}
+            data={filteredCPH}
+          />
+        ) : filteredCAD ? (
+          <AccountDetailPdfDocument
+            title={config.title}
+            printDate={printDate}
+            printTime={printTime}
+            from={fmtDMonY(startDate)}
+            to={fmtDMonY(endDate)}
+            data={filteredCAD}
+          />
+        ) : undefined
+      : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search customer, bill, invoice..."
+          pdfDocument={pdfDocCR}
+          pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasCrData && chartsCR.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        {custList.length > 0 ? (
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              padding: "10px 24px 0",
+              fontFamily: "Inter, sans-serif",
+              fontSize: 12,
+              color: "#684830",
+              alignItems: "center",
+            }}
+          >
+            <label style={{ fontWeight: 600 }}>Customer</label>
+            <select
+              value={credCus}
+              onChange={(e) => setCredCus(e.target.value)}
+              style={{
+                padding: "5px 8px",
+                border: "1px solid #C8B8A8",
+                borderRadius: 6,
+                fontFamily: "Inter, sans-serif",
+                fontSize: 12,
+                background: "#fff",
+                minWidth: 180,
+              }}
+            >
+              <option value="">— Select All —</option>
+              {custList.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id} · {c.des}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasCrData && chartsCR.length > 0 ? (
+            <ReportChartsView charts={chartsCR} title={config.title} />
+          ) : filteredCPH ? (
+            <PaymentHistoryReport report={filteredCPH} />
+          ) : filteredCAD ? (
+            <AccountDetailReport report={filteredCAD} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 5.1 Item Movement ──
+  if (config.render === "item-movement") {
+    const imvData = objectData ? (objectData as unknown as ImvData) : null;
+    const filteredIMV = imvData ? filterImv(imvData, search) : null;
+    const hasImvData =
+      !loading &&
+      !error &&
+      Boolean(filteredIMV && (filteredIMV.locationGroups?.length ?? 0) > 0);
+    const chartsIMV =
+      hasImvData && filteredIMV ? buildReportCharts(reportId, filteredIMV) : [];
+    const pdfDocIMV = hasImvData && filteredIMV ? (
+      <ItemMovementPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredIMV}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search item code or name..."
+          pdfDocument={pdfDocIMV}
+          pdfFileName={`item-movement-${imvMode}-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasImvData && chartsIMV.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div
+          style={{
+            display: "flex",
+            gap: 18,
+            padding: "10px 24px 0",
+            fontFamily: "Inter, sans-serif",
+            fontSize: 12,
+            color: "#684830",
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          {(["fast", "slow", "non"] as ImvMode[]).map((m) => (
+            <label key={m} style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer", fontWeight: 600 }}>
+              <input
+                type="radio"
+                name="imv-mode"
+                checked={imvMode === m}
+                onChange={() => setImvMode(m)}
+              />
+              {m === "fast" ? "Fast Moving" : m === "slow" ? "Slow Moving" : "Non Moving"}
+            </label>
+          ))}
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontWeight: 600 }}>
+            Threshold
+            <input
+              type="number"
+              min={1}
+              value={imvThr}
+              onChange={(e) => setImvThr(Math.max(1, Number(e.target.value) || 1))}
+              style={{
+                width: 64,
+                padding: "4px 8px",
+                border: "1px solid #C8B8A8",
+                borderRadius: 6,
+                fontFamily: "Inter, sans-serif",
+                fontSize: 12,
+              }}
+            />
+          </label>
+        </div>
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasImvData && chartsIMV.length > 0 ? (
+            <ReportChartsView charts={chartsIMV} title={config.title} />
+          ) : filteredIMV ? (
+            <ItemMovementReport report={filteredIMV} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 4.1 / 4.2 Menu Item Issue ──
+  if (config.render === "mii" || config.render === "mii-date") {
+    const miiData = objectData ? (objectData as unknown as MiiData) : null;
+    const filteredMII = miiData ? filterMii(miiData, search) : null;
+    const rangeDays=Math.max(0,Math.round((Date.parse(endDate+'T00:00:00Z')-Date.parse(startDate+'T00:00:00Z'))/86400000));
+    const hasMiiData =
+      !loading &&
+      !error &&
+      Boolean(filteredMII && (filteredMII.locationGroups?.length ?? 0) > 0);
+    const chartsMII =
+      hasMiiData && filteredMII ? buildReportCharts(reportId, filteredMII) : [];
+    const pdfDocMII = hasMiiData && filteredMII ? (
+      <MenuItemIssuePdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredMII}
+        byDate={config.render === "mii-date"}
+        sort={miiSort}
+        withCost={miiCost}
+        days={rangeDays}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search item code or name..."
+          pdfDocument={pdfDocMII}
+          pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasMiiData && chartsMII.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        {config.render === "mii" && <div
+          style={{
+            display: "flex",
+            gap: 16,
+            padding: "10px 24px 0",
+            fontFamily: "Inter, sans-serif",
+            fontSize: 12,
+            color: "#684830",
+            alignItems: "center",
+          }}
+        >
+          <label style={{display:'flex',gap:7,alignItems:'center',fontWeight:600}}>Department <select value={miiDept} onChange={e=>setMiiDept(e.target.value)} style={{padding:'7px',border:'1px solid #decbb0',borderRadius:8,background:'white'}}><option value="">All departments</option>{(miiData?.departments??[]).map(d=><option value={d.code} key={d.code}>{d.name}</option>)}</select></label>
+          <label style={{ display: "flex", gap: 7, alignItems: "center", cursor: "pointer", fontWeight: 600 }}>
+            <input
+              type="checkbox"
+              checked={miiCost}
+              onChange={(e) => setMiiCost(e.target.checked)}
+            />
+            With Sale Cost
+          </label>
+          <span style={{ color: "#907860", fontSize: 11 }}>
+            (Show cost of sales)
+          </span>
+        </div>}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasMiiData && chartsMII.length > 0 ? (
+            <ReportChartsView charts={chartsMII} title={config.title} />
+          ) : filteredMII ? (
+            config.render === "mii-date" ? (
+              <MenuItemIssueByDateReport report={filteredMII} sort={miiSort} onSortChange={setMiiSort} />
+            ) : (
+              <MenuItemIssueReport report={filteredMII} withCost={miiCost} days={rangeDays} />
+            )
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 2.4 Payment - Bill Type Wise ──
+  if (config.render === "payment-types" || config.render === "payment-daily") {
+    const types=config.render === "payment-types" && objectData ? filterTypes(objectData as unknown as TypesData,search) : undefined;
+    const daily=config.render === "payment-daily" && objectData ? filterDaily(objectData as unknown as DailyData,search) : undefined;
+    const data=types || daily; const hasData=!loading && !error && !!data?.locationGroups.length;
+    const pdf=hasData ? <PaymentTotalsPdf title={config.title} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} types={types} daily={daily}/> : undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search payment, date, location..." pdfDocument={pdf} pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)}/>{filterBarNode}<div id="report-zoom-area">{loading?<LoadingBlock/>:error?<ErrorBlock message={error}/>:chartMode&&(types||daily)?<ReportChartsView charts={paymentTotalsCharts(types,daily)} title={config.title}/>:types?<PaymentTypes data={types}/>:daily?<DailyPayments data={daily}/>:null}</div></>;
+  }
+
+  if (config.render === "billtype") {
+    const btData = objectData ? (objectData as unknown as BillTypeData) : null;
+    const filteredBT = btData ? filterBillType(btData, search) : null;
+    const hasBtData =
+      !loading &&
+      !error &&
+      Boolean(filteredBT && (filteredBT.locationGroups?.length ?? 0) > 0);
+    const chartsBT =
+      hasBtData && filteredBT ? buildReportCharts(reportId, filteredBT) : [];
+    const pdfDocBT = hasBtData && filteredBT ? (
+      <BillTypePdfDocument title={config.title} printDate={printDate} printTime={printTime} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} data={filteredBT} />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search bill type..." pdfDocument={pdfDocBT} pdfFileName={`payment-billtype-${startDate}_to_${endDate}.pdf`} chartSupported={hasBtData && chartsBT.length > 0} chartMode={chartMode} onChartToggle={() => setChartMode((c) => !c)} />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? <LoadingBlock /> : error ? <ErrorBlock message={error} /> : chartMode && hasBtData && chartsBT.length > 0 ? <ReportChartsView charts={chartsBT} title={config.title} /> : filteredBT ? <BillTypeReport report={filteredBT} /> : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 3.1 Cashier Wise Sales ──
+  if (config.render === "cashier-collection") {
+    const ccData = objectData ? (objectData as unknown as CcData) : null;
+    const filteredCC = ccData ? filterCc(ccData, search) : null;
+    const hasCcData =
+      !loading &&
+      !error &&
+      Boolean(filteredCC && (filteredCC.locationGroups?.length ?? 0) > 0);
+    const chartsCC =
+      hasCcData && filteredCC ? buildReportCharts(reportId, filteredCC) : [];
+    const pdfDocCC = hasCcData && filteredCC ? (
+      <CashierCollectionPdfDocument title={config.title} printDate={printDate} printTime={printTime} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} data={filteredCC} />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search cashier or bill no..." pdfDocument={pdfDocCC} pdfFileName={`cashier-collection-${startDate}_to_${endDate}.pdf`} chartSupported={hasCcData && chartsCC.length > 0} chartMode={chartMode} onChartToggle={() => setChartMode((c) => !c)} />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? <LoadingBlock /> : error ? <ErrorBlock message={error} /> : chartMode && hasCcData && chartsCC.length > 0 ? <ReportChartsView charts={chartsCC} title={config.title} /> : filteredCC ? <CashierCollectionReport report={filteredCC} /> : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 3.2 Payment Break Down ──
+  if (config.render === "cashier-breakdown") {
+    const cbdData = objectData ? (objectData as unknown as CbdData) : null;
+    const filteredCBD = cbdData ? filterCbd(cbdData, search) : null;
+    const hasCbdData =
+      !loading &&
+      !error &&
+      Boolean(filteredCBD && (filteredCBD.locationGroups?.length ?? 0) > 0);
+    const chartsCBD =
+      hasCbdData && filteredCBD ? buildReportCharts(reportId, filteredCBD) : [];
+    const pdfDocCBD = hasCbdData && filteredCBD ? (
+      <CashierBreakdownPdfDocument title={config.title} printDate={printDate} printTime={printTime} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} data={filteredCBD} />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search cashier or mode..." pdfDocument={pdfDocCBD} pdfFileName={`payment-breakdown-${startDate}_to_${endDate}.pdf`} chartSupported={hasCbdData && chartsCBD.length > 0} chartMode={chartMode} onChartToggle={() => setChartMode((c) => !c)} />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? <LoadingBlock /> : error ? <ErrorBlock message={error} /> : chartMode && hasCbdData && chartsCBD.length > 0 ? <ReportChartsView charts={chartsCBD} title={config.title} /> : filteredCBD ? <CashierBreakdownReport report={filteredCBD} /> : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 1.5 Hourly Sales ──
+  if (config.render === "hourly-sales") {
+    const hrData = objectData
+      ? (objectData as unknown as HourlySalesData)
+      : null;
+    const filteredHR = hrData ? filterHourly(hrData, search) : null;
+    const hasHrData =
+      !loading &&
+      !error &&
+      Boolean(filteredHR && (filteredHR.locationGroups?.length ?? 0) > 0);
+    const chartsHR =
+      hasHrData && filteredHR ? buildReportCharts(reportId, filteredHR) : [];
+    const pdfDocHR = hasHrData && filteredHR ? (
+      <HourlySalesPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredHR}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search hour or location..."
+          pdfDocument={pdfDocHR}
+          pdfFileName={`hourly-sales-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasHrData && chartsHR.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasHrData && chartsHR.length > 0 ? (
+            <ReportChartsView charts={chartsHR} title={config.title} />
+          ) : filteredHR ? (
+            <HourlySalesReport report={filteredHR} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 21.1 Current Credit Summary ──
+  if (config.render === "credit-summary") {
+    const csData = objectData
+      ? (objectData as unknown as CreditSummaryData)
+      : null;
+    const filteredCS = csData ? filterCreditSummary(csData, search) : null;
+    const hasCsData =
+      !loading &&
+      !error &&
+      Boolean(filteredCS && (filteredCS.locationGroups?.length ?? 0) > 0);
+    const chartsCS =
+      hasCsData && filteredCS ? buildReportCharts(reportId, filteredCS) : [];
+    const pdfDocCS = hasCsData && filteredCS ? (
+      <CreditSummaryPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredCS}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle="Current used credit — not date-filtered"
+          hideDates
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search customer code or name..."
+          pdfDocument={pdfDocCS}
+          pdfFileName="current-credit-summary.pdf"
+          chartSupported={hasCsData && chartsCS.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasCsData && chartsCS.length > 0 ? (
+            <ReportChartsView charts={chartsCS} title={config.title} />
+          ) : filteredCS ? (
+            <CreditSummaryReport report={filteredCS} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  if (config.id === "credit-history") {
+    const report = objectData as CreditData | null;
+    const rows = report ? creditFilter(report, creditCustomerSelection, search) : [];
+    const options = new Map<string,string>();
+    for (const r of report?.rows ?? []) { const key=`c:${r.cus}`; if (!options.has(key)) options.set(key,r.cus ? `${r.cus} — ${r.cusName || r.cus}` : "Unassigned customer"); }
+    const pdf = rows.length ? <CreditHistoryPosPdf rows={rows} from={fmtDMonY(startDate)} to={fmtDMonY(endDate)} /> : undefined;
+    return <><ReportToolbar title={config.title} subtitle="Customer credit transactions (POS 21.2)" from={startDate} to={endDate} onRangeChange={rangeChange} search={search} onSearchChange={setSearch} searchPlaceholder="Search customer or bill..." pdfDocument={pdf} pdfFileName={`credit-history-${startDate}_to_${endDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)} />
+      {filterBarNode}
+      <div style={{padding:"10px 24px",color:"#684830",fontSize:12}}><label>Customer: <select aria-label="Customer" value={creditCustomerSelection} onChange={e=>setCreditCustomerSelection(e.target.value)} style={{marginLeft:8,padding:"7px 10px",border:"1px solid #decbb0",borderRadius:8,background:"white"}}><option value="all">All Customers</option>{creditCustomerSelection!=="all"&&!options.has(creditCustomerSelection)&&<option value={creditCustomerSelection}>Selected customer (no records)</option>}{Array.from(options).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label></div>
+      <div id="report-zoom-area" style={{flex:1}}>{loading?<LoadingBlock/>:error?<ErrorBlock message={error}/>:chartMode?<ReportChartsView charts={creditHistoryPosCharts(rows)} title={config.title}/>:<CreditHistoryPos rows={rows}/>}</div>
+    </>;
+  }
+
+  // ── 21.2 / 21.3 Credit & Payment History ──
+  if (config.render === "credit-history") {
+    const chData = objectData
+      ? (objectData as unknown as CreditHistoryData)
+      : null;
+    const filteredCH = chData ? filterCreditHistory(chData, search) : null;
+    const hasChData =
+      !loading &&
+      !error &&
+      Boolean(filteredCH && (filteredCH.locationGroups?.length ?? 0) > 0);
+    const chartsCH =
+      hasChData && filteredCH ? buildReportCharts(reportId, filteredCH) : [];
+    const pdfDocCH = hasChData && filteredCH ? (
+      <CreditHistoryPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredCH}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search customer code or name..."
+          pdfDocument={pdfDocCH}
+          pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasChData && chartsCH.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasChData && chartsCH.length > 0 ? (
+            <ReportChartsView charts={chartsCH} title={config.title} />
+          ) : filteredCH ? (
+            <CreditHistoryReport report={filteredCH} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // ── 14 Open (On-Going) Tables ──
+  if (config.render === "open-tables") {
+    const openData = objectData
+      ? (objectData as unknown as OpenTablesData)
+      : null;
+    const filteredOpen = openData ? filterOpen(openData, search) : null;
+    const hasOpenData =
+      !loading &&
+      !error &&
+      Boolean(filteredOpen && (filteredOpen.sections?.length ?? 0) > 0);
+    const chartsOpen =
+      hasOpenData && filteredOpen ? buildReportCharts(reportId, filteredOpen) : [];
+    const pdfDocOpen = hasOpenData && filteredOpen ? (
+      <OpenTablesPdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredOpen}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle="Current open tables — live data, not date-filtered"
+          hideDates
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search table, item, cashier..."
+          pdfDocument={pdfDocOpen}
+          pdfFileName="open-tables-current.pdf"
+          chartSupported={hasOpenData && chartsOpen.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasOpenData && chartsOpen.length > 0 ? (
+            <ReportChartsView charts={chartsOpen} title={config.title} />
+          ) : filteredOpen ? (
+            <OpenTablesReport report={filteredOpen} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  if (reportId === "invoice-trace") {
+    const run = async () => {
+      const id = invoiceNo.trim();
+      if (!loc || !id) { setInvoiceError("Select one location and enter an invoice number."); setInvoiceData(null); return; }
+      const seq = ++invoiceRequest.current;
+      setInvoiceBusy(true); setInvoiceData(null); setInvoiceError("");
+      try {
+        const res = await getInvoiceTraceAction(id, loc);
+        if (seq !== invoiceRequest.current) return;
+        if (res.success && res.data) setInvoiceData(res.data as InvoiceData);
+        else setInvoiceError(res.error || "Unable to load invoice trace.");
+      } catch { if (seq === invoiceRequest.current) setInvoiceError("Unable to load invoice trace."); }
+      finally { if (seq === invoiceRequest.current) setInvoiceBusy(false); }
+    };
+    const pdf = invoiceData?.rows.length ? <InvoiceTracePdf data={invoiceData} /> : undefined;
+    return <><ReportToolbar title={config.title} subtitle="Find an invoice by location and exact invoice number" from={startDate} to={endDate} onRangeChange={rangeChange} hideDates searchable={false} search="" onSearchChange={()=>{}} pdfDocument={pdf} pdfFileName="invoice-trace.pdf" chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)} />
+      {filterBarNode}
+      <form onSubmit={e=>{e.preventDefault(); void run();}} style={{padding:"14px 24px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",color:"#684830",fontSize:12}}><label htmlFor="invoice-number">Invoice Number:</label><input id="invoice-number" value={invoiceNo} maxLength={100} onChange={e=>{invoiceRequest.current++; setInvoiceBusy(false); setInvoiceData(null); setInvoiceError(""); setInvoiceNo(e.target.value);}} style={{height:36,padding:"0 10px",border:"1px solid #decbb0",borderRadius:8}}/><button type="submit" disabled={invoiceBusy} style={{height:36,padding:"0 16px",background:"#684830",color:"white",border:0,borderRadius:8,cursor:"pointer"}}>Trace Invoice</button><span>Select a location above.</span></form>
+      <div id="report-zoom-area" style={{flex:1}}>{invoiceBusy ? <LoadingBlock/> : invoiceError ? <ErrorBlock message={invoiceError}/> : invoiceData ? invoiceData.rows.length ? (chartMode?<ReportChartsView charts={invoiceCharts(invoiceData)} title={config.title}/>:<InvoiceTraceReport data={invoiceData}/>) : <ReportEmptyState hint="Check the invoice number and location.">No records found for this invoice and location.</ReportEmptyState> : <p style={{padding:30,textAlign:"center"}}>Select a location and enter an invoice number.</p>}</div>
+    </>;
+  }
+
+  // ── 15.1 / 15.2 Slip & Invoice Trace ──
+  if (config.render === "trace") {
+    const traceData = objectData
+      ? (objectData as unknown as TraceData)
+      : null;
+    const filteredTrace = traceData ? filterTrace(traceData, search) : null;
+    const hasTraceData =
+      !loading &&
+      !error &&
+      Boolean(filteredTrace && (filteredTrace.locationGroups?.length ?? 0) > 0);
+    const chartsTrace =
+      hasTraceData && filteredTrace
+        ? buildReportCharts(reportId, filteredTrace)
+        : [];
+    const pdfDocTrace = hasTraceData && filteredTrace ? (
+      <TracePdfDocument
+        title={config.title}
+        printDate={printDate}
+        printTime={printTime}
+        from={fmtDMonY(startDate)}
+        to={fmtDMonY(endDate)}
+        data={filteredTrace}
+      />
+    ) : undefined;
+    return (
+      <>
+        <ReportToolbar
+          title={config.title}
+          subtitle={config.subtitle}
+          from={startDate}
+          to={endDate}
+          onRangeChange={rangeChange}
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder={reportId === "invoice-trace" ? "Type invoice number..." : "Search bill no, ref, action..."}
+          pdfDocument={pdfDocTrace}
+          pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`}
+          chartSupported={hasTraceData && chartsTrace.length > 0}
+          chartMode={chartMode}
+          onChartToggle={() => setChartMode((c) => !c)}
+        />
+        {filterBarNode}
+        <div id="report-zoom-area" style={{ flex: 1 }}>
+          {loading ? (
+            <LoadingBlock />
+          ) : error ? (
+            <ErrorBlock message={error} />
+          ) : chartMode && hasTraceData && chartsTrace.length > 0 ? (
+            <ReportChartsView charts={chartsTrace} title={config.title} />
+          ) : filteredTrace ? (
+            <TraceReport report={filteredTrace} invoiceHint={reportId === "invoice-trace"} />
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  // One saved snapshot for one permitted location and selected business date.
+  if (config.render === "performance-report") {
+    const perfData=objectData ? objectData as unknown as PerformanceReportData : null;
+    const filtered=perfData ? filterPerformanceReport(perfData,search) : null;
+    const pdf=!loading&&!error&&filtered?.rows.length ? <PerformancePdfDocument data={filtered}/> : undefined;
+    return <><ReportToolbar title={config.title} subtitle={config.subtitle} from={startDate} to={startDate}
+      onRangeChange={f=>{setStartDate(f);setEndDate(f)}} singleDate singleDateLabel="Business Date"
+      search={search} onSearchChange={setSearch} searchPlaceholder="Search saved rows..."
+      pdfDocument={pdf} pdfFileName={`performance-report-${startDate}.pdf`} chartSupported={true} chartMode={chartMode} onChartToggle={()=>setChartMode(!chartMode)}/>
+      {perfData && <div style={{display:'flex',gap:8,flexWrap:'wrap',padding:'12px 24px 0'}}>{perfData.locations.map(location=><button key={location.code} type="button" onClick={()=>setLoc(location.code)} style={{padding:'9px 14px',borderRadius:8,border:'1px solid #decbb0',cursor:'pointer',background:perfData.location===location.code?'#684830':'white',color:perfData.location===location.code?'white':'#45301d'}}>{location.name}</button>)}</div>}
+      <div id="report-zoom-area" style={{flex:1}}>{loading?<PerformanceLoadingBlock/>:error?<ErrorBlock message={error}/>:filtered&&perfData?.rows.length&&!filtered.rows.length?<ReportEmptyState>No matching rows for this search.</ReportEmptyState>:filtered?(chartMode?<ReportChartsView charts={performanceCharts(perfData!,search)} title={config.title}/>:<PerformanceReport report={filtered}/>):null}</div></>;
+  }
+
+  // ── Generic reports (Transaction Summary etc.) ──
+  const hasGenericData = !loading && !error && filteredRows.length > 0;
+  const pdfDoc = hasGenericData ? (
+    <ReportPdfDocument
+      title={config.title}
+      from={fmtDMonY(startDate)}
+      to={fmtDMonY(endDate)}
+      columns={config.columns}
+      data={filteredRows}
+    />
+  ) : undefined;
+
+  return (
+    <>
+      <ReportToolbar
+        title={config.title}
+        subtitle={config.subtitle}
+        from={startDate}
+        to={endDate}
+        onRangeChange={rangeChange}
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search..."
+        pdfDocument={pdfDoc}
+        pdfFileName={`${config.id}-${startDate}_to_${endDate}.pdf`}
+        chartSupported={hasGenericData && chartsRows.length > 0}
+        chartMode={chartMode}
+        onChartToggle={() => setChartMode((c) => !c)}
+      />
+      {filterBarNode}
+      <div id="report-zoom-area" style={{ flex: 1 }}>
+        {loading ? (
+          <LoadingBlock />
+        ) : error ? (
+          <ErrorBlock message={error} />
+        ) : chartMode && hasGenericData && chartsRows.length > 0 ? (
+          <ReportChartsView charts={chartsRows} title={config.title} />
+        ) : (
+          <DynamicReportTable
+            columns={config.columns}
+            data={filteredRows}
+          />
+        )}
+      </div>
+    </>
+  );
+}

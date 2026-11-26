@@ -1,0 +1,33 @@
+import InventoryWorkspace from "@/components/InventoryWorkspace";
+import RawItemsWorkspace from "@/components/RawItemsWorkspace";
+import CategoryWorkspace from "@/components/CategoryWorkspace";
+import UnitWorkspace from "@/components/UnitWorkspace";
+import {notFound} from "next/navigation";
+import {renderScreenAccess} from "@/lib/screenAccess";
+import SupplierWorkspace from "@/components/SupplierWorkspace";
+import PurchasingWorkspace from "@/components/PurchasingWorkspace";
+import StockDocumentsWorkspace from "@/components/StockDocumentsWorkspace";
+import ReconWorkspace from "@/components/ReconWorkspace";
+import MovementWorkspace from "@/components/MovementWorkspace";
+import SrnWorkspace from "@/components/SrnWorkspace";
+import LocationWorkspace from "@/components/LocationWorkspace";
+import InventoryTransactions from "@/components/InventoryTransactions";
+
+export const dynamic = "force-dynamic";
+const transactionSections = new Set(["po", "grn", "srn", "damage", "transfer-requisition", "transfer-note", "transfer-return", "issue-requisition", "issue-note", "stock-reconciliation"]);
+export default async function InventoryPage({ params }: { params: Promise<{ section: string }> }) {
+  const { section } = await params;
+  if (section === "modes") notFound();
+  const screen:Record<string,string>={locations:'locations',categories:'categories',items:'items',units:'units',suppliers:'suppliers',po:'po',grn:'grn',srn:'srn',damage:'damage','transfer-requisition':'trq','transfer-note':'tn','transfer-return':'tr','issue-requisition':'irq','issue-note':'inn','stock-reconciliation':'recon'};
+  if (!screen[section]) notFound();
+  let content: React.ReactNode;
+  if (section === "items") content = <RawItemsWorkspace/>;
+  else {
+  const movementKeys = {"transfer-requisition":"trq", "transfer-note":"tn", "transfer-return":"tr", "issue-requisition":"irq", "issue-note":"inn"} as const;
+  const movement = movementKeys[section as keyof typeof movementKeys];
+  if (movement) content = <MovementWorkspace key={section} kind={movement} />;
+  else
+  content = section === "locations" ? <LocationWorkspace /> : section === "srn" ? <SrnWorkspace /> : section === "stock-reconciliation" ? <ReconWorkspace /> : section === "damage" ? <StockDocumentsWorkspace key={section} kind="damage" /> : section === "po" || section === "grn" ? <PurchasingWorkspace key={section} section={section} /> : section === "categories" ? <CategoryWorkspace /> : section === "units" ? <UnitWorkspace /> : section === "suppliers" ? <SupplierWorkspace /> : transactionSections.has(section) ? <InventoryTransactions section={section} /> : <InventoryWorkspace />;
+  }
+  return renderScreenAccess(`${screen[section]}:VIEW`, content);
+}

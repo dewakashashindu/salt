@@ -1,0 +1,71 @@
+import 'server-only';
+import sql from 'mssql';
+import {logActivity} from '@/lib/activityLog';
+import {getPool} from '@/lib/db';
+import {decryptAccess,requireAccessKey} from '@/lib/webAccessCrypto';
+import {WEB_ACCESS_SECTIONS,WEB_ACCESS_KEYS} from '@/lib/webAccessCatalog';
+import {REPORT_ACCESS_SCREENS} from '@/lib/reportAccessCatalog';
+import type {SessionUser} from '@/lib/auth';
+
+/** Server-side authorization foundation. Callers must still enforce it at every entry point. */
+export class AccessDeniedError extends Error {
+  constructor(){super('Access denied');this.name='AccessDeniedError'}
+}
+const clean=(value:unknown)=>typeof value==='string'?value.trim():'';
+const nodes=WEB_ACCESS_SECTIONS.flatMap(group=>group.screens.map(screen=>({id:screen.id,actions:screen.actions as readonly string[],parent:group.title})));
+
+export async function loadWebAuthorization(session:SessionUser){
+  requireAccessKey();
+  const userId=clean(session.userId);
+  if(!userId || userId.length>10)throw new AccessDeniedError();
+  const pool=await getPool();
+  const [users,entries,assigned,master]=await Promise.all([
+    pool.request().input('id',sql.Char(10),userId).query('SELECT RTRIM(LOCCODE) AS homeLocation, Enable AS enabled FROM dbo.Tbl_UserDetails WHERE UserId=@id'),
+    pool.request().input('id',sql.Char(10),userId).query('SELECT FuncID,Auth,Module,ACCESS FROM dbo.Tbl_UserAuthorizationWeb WHERE UserID=@id'),
+    pool.request().input('id',sql.Char(10),userId).query('SELECT RTRIM(LocationID) AS code,IsDefault FROM dbo.Tbl_UserLocationAccess WHERE UserID=@id'),
+    pool.request().query('SELECT RTRIM(LocCode) AS code,RTRIM(MainLoc) AS parent,SubLoc,Enable FROM dbo.Tbl_LocationMaster')
+  ]);
+  if(users.recordset.length!==1 || !users.recordset[0].enabled)throw new AccessDeniedError();
+  const permissions=new Set<string>(),locations=new Set<string>(),seen=new Set<string>();
+  let legacyReports:string|null=null;
+  let hasIndividualReports=false;
+  for(const row of entries.recordset){
+    const module=clean(row.Module);
+    if(module==='APF'){decryptAccess(clean(row.FuncID));continue}
+    if(module==='LOC')continue; // Legacy assignments are not authoritative after migration.
+    const id=decryptAccess(clean(row.FuncID));
+    if(id==='reports'&&module==='Reports'){if(legacyReports!==null)throw new AccessDeniedError();legacyReports=decryptAccess(clean(row.ACCESS));if(!/^[01]{2}$/.test(legacyReports))throw new AccessDeniedError();continue}
+    if(module==='Reports')hasIndividualReports=true;
+    const node=nodes.find(n=>n.id===id&&n.parent===module);
+    if(!node||seen.has(id))throw new AccessDeniedError();
+    seen.add(id);
+    const rawMask=decryptAccess(clean(row.ACCESS));
+    const mask=(id==='irq' && rawMask.length===4) || ((id==='inn' || id==='recon') && rawMask.length===3) || (id==='items' && (rawMask.length===1||rawMask.length===2)) || (id==='locations' && rawMask.length===2) || ((id==='po' || id==='grn' || id==='srn') && rawMask.length===4) || (['trq','tn','tr','damage'].includes(id) && rawMask.length===5) ? rawMask.padEnd(node.actions.length,'0') : rawMask;
+    if(mask.length!==node.actions.length||!/^[01]+$/.test(mask))throw new AccessDeniedError();
+    node.actions.forEach((action,i)=>{if(mask[i]==='1')permissions.add(`${id}:${action}`)});
+  }
+  if(legacyReports&&!hasIndividualReports){
+    for(const report of REPORT_ACCESS_SCREENS){
+      if(legacyReports[0]==='1')permissions.add(`${report.id}:VIEW`);
+      if(legacyReports[1]==='1')permissions.add(`${report.id}:PRINT`);
+    }
+  }
+  const defaults=assigned.recordset.filter(r=>r.IsDefault);
+  if(defaults.length!==1)throw new AccessDeniedError();
+  const defaultCode=clean(defaults[0].code);
+  const mainLocations=new Set<string>(), seenLocations=new Set<string>();
+  for(const row of assigned.recordset){const id=clean(row.code);const match=master.recordset.filter(m=>clean(m.code).toUpperCase()===id.toUpperCase());if(!id||seenLocations.has(id.toUpperCase())||match.length!==1||!match[0].Enable||match[0].SubLoc)throw new AccessDeniedError();seenLocations.add(id.toUpperCase());mainLocations.add(clean(match[0].code));locations.add(clean(match[0].code));}
+  for(const row of master.recordset){if(row.Enable&&row.SubLoc&&[...mainLocations].some(m=>m.toUpperCase()===clean(row.parent).toUpperCase()))locations.add(clean(row.code));}
+  return {permissions,locations,mainLocations,defaultLocation:[...mainLocations].find(code=>code.toUpperCase()===defaultCode.toUpperCase())!};
+}
+export async function requireWebPermission(session:SessionUser,key:string){
+  if(!WEB_ACCESS_KEYS.has(key)){await logActivity({actor:session,category:'SECURITY',action:'ACCESS_DENIED',targetType:'permission',targetId:key,details:`Attempted to use unknown permission ${key}`});throw new AccessDeniedError()}
+  const access=await loadWebAuthorization(session);
+  if(!access.permissions.has(key)){await logActivity({actor:session,category:'SECURITY',action:'ACCESS_DENIED',targetType:'permission',targetId:key,details:`Permission denied: ${key}`});throw new AccessDeniedError()}
+  return access;
+}
+export function requireWebLocation(access:{locations:Set<string>},location:string){
+  const loc=clean(location);
+  if(!loc||![...access.locations].some(x=>x.toUpperCase()===loc.toUpperCase()))throw new AccessDeniedError();
+  return loc;
+}
